@@ -1,4 +1,4 @@
----
+[---
 tracker:
   kind: linear
   provider:
@@ -7,12 +7,10 @@ tracker:
   active_states:
     - Todo
     - In Progress
-    - Merging
     - Rework
   terminal_states:
     - Closed
     - Cancelled
-    - Canceled
     - Duplicate
     - Done
 polling:
@@ -327,3 +325,4 @@ Use this exact structure for the persistent workpad comment and keep it updated 
 
 - <only include when something was confusing during execution>
 ````
+]()
