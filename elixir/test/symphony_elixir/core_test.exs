@@ -1324,6 +1324,41 @@ defmodule SymphonyElixir.CoreTest do
     assert prompt =~ "attempt=3"
   end
 
+  test "prompt builder renders the routed role and omits it when unconfigured" do
+    workflow_prompt =
+      "{% if role %}role={{ role.name }} command={{ role.command }} entry={{ role.needs_entry_transition }} next={{ role.success_state }}{% else %}no-role{% endif %}"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      prompt: workflow_prompt,
+      roles: [
+        %{
+          name: "planner",
+          states: ["Plan Todo", "Planning"],
+          entry_states: ["Plan Todo"],
+          active_state: "Planning",
+          success_state: "Plan Review",
+          command: "/planner"
+        }
+      ]
+    )
+
+    entry_issue = %Issue{identifier: "S-2", title: "T", state: "Plan Todo", url: "https://example.org/S-2", labels: []}
+    resume_issue = %{entry_issue | state: "Planning"}
+    unrouted_issue = %{entry_issue | state: "Backlog"}
+
+    assert PromptBuilder.build_prompt(entry_issue) ==
+             "role=planner command=/planner entry=true next=Plan Review"
+
+    assert PromptBuilder.build_prompt(resume_issue) ==
+             "role=planner command=/planner entry=false next=Plan Review"
+
+    assert PromptBuilder.build_prompt(unrouted_issue) == "no-role"
+
+    write_workflow_file!(Workflow.workflow_file_path(), prompt: workflow_prompt)
+
+    assert PromptBuilder.build_prompt(entry_issue) == "no-role"
+  end
+
   test "prompt builder renders issue datetime fields without crashing" do
     workflow_prompt = "Ticket {{ issue.identifier }} created={{ issue.created_at }} updated={{ issue.updated_at }}"
 

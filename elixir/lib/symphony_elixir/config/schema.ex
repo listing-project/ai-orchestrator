@@ -240,6 +240,8 @@ defmodule SymphonyElixir.Config.Schema do
       field(:mcp_bridge_command, :string, default: "symphony mcp-tool-bridge")
       field(:permission_mode, :string, default: "bypassPermissions")
       field(:model, :string)
+      field(:append_system_prompt, :string)
+      field(:env_file, :string)
       field(:turn_timeout_ms, :integer, default: 3_600_000)
       field(:stall_timeout_ms, :integer, default: 300_000)
     end
@@ -249,7 +251,16 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:command, :mcp_bridge_command, :permission_mode, :model, :turn_timeout_ms, :stall_timeout_ms],
+        [
+          :command,
+          :mcp_bridge_command,
+          :permission_mode,
+          :model,
+          :append_system_prompt,
+          :env_file,
+          :turn_timeout_ms,
+          :stall_timeout_ms
+        ],
         empty_values: []
       )
       |> validate_required([:command, :mcp_bridge_command])
@@ -274,6 +285,35 @@ defmodule SymphonyElixir.Config.Schema do
       else
         []
       end
+    end
+  end
+
+  defmodule Role do
+    @moduledoc """
+    Maps a set of tracker states to a project-defined agent role (e.g. a
+    `.claude/commands/<name>.md` command living in the target repository).
+    Symphony never sees or duplicates what the role's command actually does;
+    it only routes to it and knows the state transitions around it.
+    """
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:name, :string)
+      field(:states, {:array, :string}, default: [])
+      field(:entry_states, {:array, :string}, default: [])
+      field(:active_state, :string)
+      field(:success_state, :string)
+      field(:command, :string)
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, [:name, :states, :entry_states, :active_state, :success_state, :command], empty_values: [])
+      |> validate_required([:name, :active_state, :success_state, :command])
+      |> validate_length(:states, min: 1)
     end
   end
 
@@ -347,6 +387,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
     embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
     embeds_one(:claude, Claude, on_replace: :update, defaults_to_struct: true)
+    embeds_many(:roles, Role, on_replace: :delete)
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
@@ -442,6 +483,7 @@ defmodule SymphonyElixir.Config.Schema do
     |> cast_embed(:agent, with: &Agent.changeset/2)
     |> cast_embed(:codex, with: &Codex.changeset/2)
     |> cast_embed(:claude, with: &Claude.changeset/2)
+    |> cast_embed(:roles, with: &Role.changeset/2)
     |> cast_embed(:hooks, with: &Hooks.changeset/2)
     |> cast_embed(:observability, with: &Observability.changeset/2)
     |> cast_embed(:server, with: &Server.changeset/2)
@@ -683,7 +725,15 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp flatten_errors(errors, prefix) when is_list(errors) do
-    Enum.map(errors, &(prefix <> " " <> &1))
+    if Enum.all?(errors, &is_binary/1) do
+      Enum.map(errors, &(prefix <> " " <> &1))
+    else
+      # embeds_many (e.g. `roles`) reports one error map per list item, indexed
+      # positionally, rather than a flat list of message strings.
+      errors
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {error, index} -> flatten_errors(error, "#{prefix}[#{index}]") end)
+    end
   end
 
   defp translate_error({message, options}) do

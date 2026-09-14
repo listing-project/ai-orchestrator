@@ -3,7 +3,7 @@ defmodule SymphonyElixir.PromptBuilder do
   Builds agent prompts from normalized tracker work item data.
   """
 
-  alias SymphonyElixir.{Config, Workflow}
+  alias SymphonyElixir.{Config, RoleRouter, Workflow}
 
   @render_opts [strict_variables: true, strict_filters: true]
 
@@ -18,6 +18,7 @@ defmodule SymphonyElixir.PromptBuilder do
     |> Solid.render!(
       %{
         "attempt" => Keyword.get(opts, :attempt),
+        "role" => to_solid_value(RoleRouter.resolve(issue)),
         "issue" => issue |> Map.from_struct() |> to_solid_map()
       },
       @render_opts

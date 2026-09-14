@@ -1047,7 +1047,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.claude.mcp_bridge_command == "symphony mcp-tool-bridge"
     assert config.claude.permission_mode == "bypassPermissions"
     assert config.claude.model == nil
+    assert config.claude.append_system_prompt == nil
+    assert config.claude.env_file == nil
     assert config.claude.turn_timeout_ms == 3_600_000
+    assert config.roles == []
     assert config.claude.stall_timeout_ms == 300_000
 
     write_workflow_file!(Workflow.workflow_file_path(),
@@ -1078,6 +1081,44 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert claude_config.claude.command == "claude --debug"
     assert claude_config.claude.permission_mode == "acceptEdits"
     assert claude_config.claude.model == "opus"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      roles: [
+        %{
+          name: "planner",
+          states: ["Plan Todo", "Planning"],
+          entry_states: ["Plan Todo"],
+          active_state: "Planning",
+          success_state: "Plan Review",
+          command: "/planner"
+        },
+        %{
+          name: "developer",
+          states: ["Todo", "In Progress", "Rework"],
+          entry_states: ["Todo", "Rework"],
+          active_state: "In Progress",
+          success_state: "Review",
+          command: "/developer"
+        }
+      ]
+    )
+
+    [planner_role, developer_role] = Config.settings!().roles
+    assert planner_role.name == "planner"
+    assert planner_role.states == ["Plan Todo", "Planning"]
+    assert planner_role.entry_states == ["Plan Todo"]
+    assert planner_role.active_state == "Planning"
+    assert planner_role.success_state == "Plan Review"
+    assert planner_role.command == "/planner"
+    assert developer_role.name == "developer"
+    assert developer_role.entry_states == ["Todo", "Rework"]
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      roles: [%{name: "planner", states: [], active_state: "Planning", success_state: "Plan Review", command: "/planner"}]
+    )
+
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "roles"
 
     explicit_root =
       Path.join(

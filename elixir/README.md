@@ -252,6 +252,65 @@ claude:
   timeouts.
 - Requires the `claude` CLI installed and authenticated (or `ANTHROPIC_API_KEY` set) on whatever
   machine runs Symphony.
+- `claude.append_system_prompt` adds a `--append-system-prompt` string on every turn. Useful for
+  workflow-level overrides that need to sit at the system-prompt level to reliably take priority
+  over a target repository's own `CLAUDE.md` — for example, authorizing git write operations for
+  Symphony's autonomous runs specifically, without loosening that repository's `CLAUDE.md` for
+  everyone who uses Claude Code there interactively.
+- `claude.env_file` points at a `KEY=VALUE` env file (`#` comments and blank lines ignored) whose
+  entries are merged into the `claude` process's environment — and *only* that process's, not
+  Symphony's own. Use it for project-specific credentials a repository's own agent commands need
+  (e.g. Sentry access) without adding them to Symphony's own `.env` or writing them into the
+  workspace. Missing/unreadable files are logged and otherwise ignored, not fatal.
+
+### Multi-stage roles (planner/developer/... per tracker state)
+
+A workflow can route different tracker states to different project-defined agent roles instead of
+running one generic prompt for every active state. This is for repositories that already define
+their own Claude Code commands/subagents (e.g. `.claude/commands/planner.md`,
+`.claude/commands/developer.md`) and want Symphony to invoke the right one for the current stage
+without Symphony duplicating what that command does.
+
+```yaml
+roles:
+  - name: planner
+    states: ["Plan Todo", "Planning"]
+    entry_states: ["Plan Todo"]
+    active_state: "Planning"
+    success_state: "Plan Review"
+    command: /planner
+  - name: developer
+    states: ["Todo", "In Progress", "Rework"]
+    entry_states: ["Todo", "Rework"]
+    active_state: "In Progress"
+    success_state: "Review"
+    command: /developer
+```
+
+- `states` is the routing key: Symphony picks the first role whose `states` list contains the
+  issue's current tracker state (matched case- and whitespace-insensitively).
+- `entry_states` (a subset of `states`) marks where a role's work is just starting, as opposed to
+  being resumed/retried after the run stopped mid-way — exposed to the prompt template as
+  `role.needs_entry_transition` so it can tell the agent whether to transition the tracker status
+  first or continue from existing state.
+- `active_state`/`success_state` are exposed as `role.active_state`/`role.success_state`; the
+  workflow prompt template decides what to actually do with them (typically: tell the agent to
+  move the issue to `active_state` before starting, invoke `role.command`, then move it to
+  `success_state` when done). Symphony itself never calls the tracker to make these transitions —
+  the agent still does that itself with its own tracker tool call, exactly as it already does for
+  the plain Todo → In Progress → Review flow.
+- `role.command` is the only project-specific string Symphony's prompt needs — it's handed to the
+  agent to invoke, and nothing about what that command does needs to live in `WORKFLOW.md`.
+- States outside every role's `states` list (including tracker states that aren't in
+  `tracker.active_states` at all, like human-checkpoint states) get no role — the default
+  `WORKFLOW.md` template renders `{% if role %}...{% else %}...{% endif %}` around all
+  role-specific guidance so it degrades to "investigate and stop" when nothing routes.
+- Leaving `roles` empty (the default) disables this feature entirely: `{{ role }}` is always `nil`
+  in the prompt template, matching Symphony's behavior before this feature existed.
+- The workspace is unaffected by role transitions — it's already keyed only by tracker
+  identifier (see `SymphonyElixir.Workspace.workspace_key/1`), so a planner role and a developer
+  role handling the same issue at different times share the same clone instead of Symphony
+  re-cloning per stage.
 
 ### Linear adapter profile
 

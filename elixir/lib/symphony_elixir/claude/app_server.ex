@@ -177,6 +177,7 @@ defmodule SymphonyElixir.Claude.AppServer do
               :stderr_to_stdout,
               args: Enum.map(args, &String.to_charlist/1),
               cd: String.to_charlist(workspace),
+              env: project_env(settings.env_file),
               line: @port_line_bytes
             ]
           )
@@ -184,6 +185,61 @@ defmodule SymphonyElixir.Claude.AppServer do
         {:ok, port}
     end
   end
+
+  # Project-specific credentials (e.g. Sentry access) that the target
+  # repository's agent commands need, kept out of Symphony's own env and
+  # never copied into the workspace. Only the entries found in the file are
+  # overridden; everything else still inherits from the parent process.
+  defp project_env(nil), do: []
+  defp project_env(""), do: []
+
+  defp project_env(env_file) when is_binary(env_file) do
+    case File.read(env_file) do
+      {:ok, contents} ->
+        contents
+        |> String.split("\n")
+        |> Enum.flat_map(&parse_env_line/1)
+        |> Enum.map(fn {name, value} -> {String.to_charlist(name), String.to_charlist(value)} end)
+
+      {:error, reason} ->
+        Logger.warning("Failed to read claude.env_file #{env_file}: #{inspect(reason)}")
+        []
+    end
+  end
+
+  defp parse_env_line(line) do
+    trimmed = String.trim(line)
+
+    case trimmed do
+      "" ->
+        []
+
+      "#" <> _rest ->
+        []
+
+      _ ->
+        case String.split(trimmed, "=", parts: 2) do
+          [name, value] -> [{String.trim(name), strip_env_value_quotes(String.trim(value))}]
+          _ -> []
+        end
+    end
+  end
+
+  defp strip_env_value_quotes(<<"\"", inner::binary>>) do
+    case String.split_at(inner, byte_size(inner) - 1) do
+      {value, "\""} -> value
+      _ -> inner
+    end
+  end
+
+  defp strip_env_value_quotes(<<"'", inner::binary>>) do
+    case String.split_at(inner, byte_size(inner) - 1) do
+      {value, "'"} -> value
+      _ -> inner
+    end
+  end
+
+  defp strip_env_value_quotes(value), do: value
 
   defp turn_args(settings, mcp_config_path, prompt, session_id) do
     [
@@ -198,11 +254,17 @@ defmodule SymphonyElixir.Claude.AppServer do
       mcp_config_path
     ]
     |> maybe_append_model(settings.model)
+    |> maybe_append_system_prompt(settings.append_system_prompt)
     |> maybe_append_resume(session_id)
   end
 
   defp maybe_append_model(args, model) when is_binary(model) and model != "", do: args ++ ["--model", model]
   defp maybe_append_model(args, _model), do: args
+
+  defp maybe_append_system_prompt(args, prompt) when is_binary(prompt) and prompt != "",
+    do: args ++ ["--append-system-prompt", prompt]
+
+  defp maybe_append_system_prompt(args, _prompt), do: args
 
   defp maybe_append_resume(args, session_id) when is_binary(session_id), do: args ++ ["--resume", session_id]
   defp maybe_append_resume(args, _session_id), do: args
