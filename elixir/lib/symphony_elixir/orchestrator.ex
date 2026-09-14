@@ -1,13 +1,14 @@
 defmodule SymphonyElixir.Orchestrator do
   @moduledoc """
-  Polls the configured issue tracker and dispatches repository copies to Codex-backed workers.
+  Polls the configured issue tracker and dispatches repository copies to
+  Codex- or Claude-backed workers (see `SymphonyElixir.AgentBackend`).
   """
 
   use GenServer
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentBackend, AgentRunner, Config, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Tracker.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -579,23 +580,28 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp reconcile_stalled_running_issues(%State{} = state) do
-    timeout_ms = Config.settings!().codex.stall_timeout_ms
+    if map_size(state.running) == 0 do
+      state
+    else
+      now = DateTime.utc_now()
 
-    cond do
-      timeout_ms <= 0 ->
-        state
+      Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
+        timeout_ms = stall_timeout_ms_for_backend(Map.get(running_entry, :backend))
 
-      map_size(state.running) == 0 ->
-        state
-
-      true ->
-        now = DateTime.utc_now()
-
-        Enum.reduce(state.running, state, fn {issue_id, running_entry}, state_acc ->
+        if timeout_ms > 0 do
           maybe_restart_stalled_issue(state_acc, issue_id, running_entry, now, timeout_ms)
-        end)
+        else
+          state_acc
+        end
+      end)
     end
   end
+
+  defp stall_timeout_ms_for_backend(SymphonyElixir.Claude.AppServer), do: Config.settings!().claude.stall_timeout_ms
+  defp stall_timeout_ms_for_backend(_backend), do: Config.settings!().codex.stall_timeout_ms
+
+  defp backend_name(SymphonyElixir.Claude.AppServer), do: "claude"
+  defp backend_name(_backend), do: "codex"
 
   defp maybe_restart_stalled_issue(state, issue_id, running_entry, now, timeout_ms) do
     if Map.has_key?(state.blocked, issue_id) do
@@ -951,13 +957,18 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   defp spawn_issue_on_worker_host(%State{} = state, issue, attempt, recipient, worker_host) do
+    backend = AgentBackend.resolve(issue)
+
     case Task.Supervisor.start_child(state.task_supervisor, fn ->
-           AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host)
+           AgentRunner.run(issue, recipient, attempt: attempt, worker_host: worker_host, backend: backend)
          end) do
       {:ok, pid} ->
         ref = Process.monitor(pid)
 
-        Logger.info("Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} worker_host=#{worker_host || "local"}")
+        Logger.info(
+          "Dispatching issue to agent: #{issue_context(issue)} pid=#{inspect(pid)} attempt=#{inspect(attempt)} " <>
+            "worker_host=#{worker_host || "local"} backend=#{inspect(backend)}"
+        )
 
         running =
           Map.put(state.running, issue.id, %{
@@ -966,6 +977,7 @@ defmodule SymphonyElixir.Orchestrator do
             identifier: issue.identifier,
             issue: issue,
             worker_host: worker_host,
+            backend: backend,
             workspace_path: nil,
             session_id: nil,
             last_codex_message: nil,
@@ -1420,6 +1432,7 @@ defmodule SymphonyElixir.Orchestrator do
           issue_url: metadata.issue.url,
           state: metadata.issue.state,
           worker_host: Map.get(metadata, :worker_host),
+          backend: backend_name(Map.get(metadata, :backend)),
           workspace_path: Map.get(metadata, :workspace_path),
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,

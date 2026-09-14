@@ -1042,6 +1042,14 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.codex.read_timeout_ms == 5_000
     assert config.codex.stall_timeout_ms == 300_000
 
+    assert config.agent.backend == "codex"
+    assert config.claude.command == "claude"
+    assert config.claude.mcp_bridge_command == "symphony mcp-tool-bridge"
+    assert config.claude.permission_mode == "bypassPermissions"
+    assert config.claude.model == nil
+    assert config.claude.turn_timeout_ms == 3_600_000
+    assert config.claude.stall_timeout_ms == 300_000
+
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_required_labels: [" Symphony ", "SYMPHONY", "JavaScript"]
     )
@@ -1057,6 +1065,19 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert Config.settings!().codex.command ==
              "codex --config 'model=\"gpt-5.5\"' app-server"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      agent_backend: "claude",
+      claude_command: "claude --debug",
+      claude_permission_mode: "acceptEdits",
+      claude_model: "opus"
+    )
+
+    claude_config = Config.settings!()
+    assert claude_config.agent.backend == "claude"
+    assert claude_config.claude.command == "claude --debug"
+    assert claude_config.claude.permission_mode == "acceptEdits"
+    assert claude_config.claude.model == "opus"
 
     explicit_root =
       Path.join(
@@ -1112,6 +1133,22 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     write_workflow_file!(Workflow.workflow_file_path(), codex_stall_timeout_ms: "bad")
     assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
     assert message =~ "codex.stall_timeout_ms"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_backend: "cursor")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.backend"
+
+    write_workflow_file!(Workflow.workflow_file_path(), claude_permission_mode: "yolo")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "claude.permission_mode"
+
+    write_workflow_file!(Workflow.workflow_file_path(), claude_turn_timeout_ms: "bad")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "claude.turn_timeout_ms"
+
+    write_workflow_file!(Workflow.workflow_file_path(), claude_stall_timeout_ms: "bad")
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "claude.stall_timeout_ms"
 
     write_workflow_file!(Workflow.workflow_file_path(),
       tracker_active_states: %{todo: true},

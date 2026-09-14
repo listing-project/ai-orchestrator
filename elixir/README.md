@@ -16,16 +16,20 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 1. Polls the configured tracker for candidate work (included adapters: Linear, GitHub Issues, Jira
    Cloud, Asana, and GitLab)
 2. Creates a workspace per issue
-3. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
-   workspace
-4. Sends a workflow prompt to Codex
-5. Keeps Codex working on the issue until the work is done
+3. Launches the configured coding-agent backend inside the workspace: Codex in
+   [App Server mode](https://developers.openai.com/codex/app-server/) by default, or the Claude
+   Code CLI in non-interactive mode when `agent.backend` (or a per-issue `agent:claude` label)
+   selects Claude — see [Coding agent backends](#coding-agent-backends-codex-and-claude)
+4. Sends a workflow prompt to the agent
+5. Keeps the agent working on the issue until the work is done
 
-During app-server sessions, the selected tracker adapter may advertise provider-native tools. The
-Linear serves `linear_graphql`, GitHub Issues serves `github_api`, Jira Cloud serves
-`jira_rest`, Asana serves `asana_api`, and GitLab serves `gitlab_api`. Symphony executes those
-tools with configured host-side auth and removes declared tracker-token environment variables from
-the Codex child, so the agent does not need a second tracker login.
+During a session, the selected tracker adapter may advertise provider-native tools. Linear serves
+`linear_graphql`, GitHub Issues serves `github_api`, Jira Cloud serves `jira_rest`, Asana serves
+`asana_api`, and GitLab serves `gitlab_api`. Symphony executes those tools with configured
+host-side auth. For Codex, it removes declared tracker-token environment variables from the Codex
+child and answers tool calls in-process; for Claude, tools are served over MCP by
+`symphony mcp-tool-bridge` (see below), so the agent does not need a second tracker login either
+way.
 
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
@@ -199,6 +203,55 @@ codex:
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
   `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+
+## Coding agent backends: Codex and Claude
+
+Symphony can drive either the OpenAI Codex CLI (`codex app-server`, the default) or the Claude
+Code CLI (`claude -p`, non-interactive/"print" mode) per issue:
+
+- `agent.backend` sets the workflow-wide default: `codex` or `claude` (default `codex`).
+- An `agent:<backend>` or `backend:<backend>` label on the issue overrides the default for that
+  ticket — case- and whitespace-insensitive, same as `tracker.required_labels`. This lets a team
+  default to one backend and route individual tickets to the other without restarting Symphony,
+  e.g. a label `agent:claude` sends just that issue through Claude.
+
+```yaml
+agent:
+  backend: codex # or "claude"
+claude:
+  command: claude
+  mcp_bridge_command: symphony mcp-tool-bridge
+  permission_mode: bypassPermissions
+  model: null # e.g. "opus" to override the CLI's default model
+  turn_timeout_ms: 3600000
+  stall_timeout_ms: 300000
+```
+
+### How the Claude backend differs from Codex
+
+- Codex keeps one long-lived `codex app-server` JSON-RPC process per session and answers tracker
+  tool calls (`linear_graphql`, `github_api`, ...) inline from Symphony itself.
+- Claude Code has no equivalent app-server protocol, so Symphony spawns
+  `claude -p --output-format stream-json` fresh per turn and gives it tracker tools over MCP
+  instead: it writes a `--mcp-config` that tells the Claude CLI to spawn
+  `symphony mcp-tool-bridge --workflow <path>` as its own MCP server subprocess, and that process
+  serves the exact same tool bindings (`SymphonyElixir.Tracker`) Codex calls in-process, so tool
+  behavior never drifts between backends. Make sure the `symphony` escript (or whatever
+  `claude.mcp_bridge_command` you configure) is reachable on `PATH` wherever Claude Code runs.
+- Continuation turns use `claude --resume <session_id>` rather than Codex's persistent thread id.
+- Symphony does **not** strip tracker secrets from the Claude CLI's own process environment (unlike
+  Codex), because those secrets need to reach the MCP tool bridge process Claude spawns as its own
+  child. This is a deliberate, documented difference from Codex's tool-secret isolation model —
+  keep that in mind if the workspace content is untrusted.
+- **The Claude backend only supports local execution today.** Dispatching a `claude`-backed issue
+  to an SSH `worker.ssh_hosts` entry fails fast with `{:unsupported_remote_claude_backend,
+  worker_host}` instead of silently running without tracker tools, because the MCP tool bridge
+  would also need to run on the worker host and that is not wired up.
+- `claude.stall_timeout_ms` mirrors `codex.stall_timeout_ms` but applies to Claude-backed issues
+  specifically; Codex-backed and Claude-backed issues can run concurrently with independent stall
+  timeouts.
+- Requires the `claude` CLI installed and authenticated (or `ANTHROPIC_API_KEY` set) on whatever
+  machine runs Symphony.
 
 ### Linear adapter profile
 

@@ -17,9 +17,42 @@ defmodule SymphonyElixir.CLI do
           ensure_all_started: (-> ensure_started_result())
         }
 
+  @mcp_bridge_switches [workflow: :string]
+
   @spec main([String.t()]) :: no_return()
+  def main(["mcp-tool-bridge" | rest]) do
+    run_mcp_tool_bridge(rest)
+  end
+
   def main(args) do
     main(args, fn -> Application.ensure_all_started(:symphony_elixir) end)
+  end
+
+  @doc false
+  @spec run_mcp_tool_bridge([String.t()]) :: no_return()
+  def run_mcp_tool_bridge(args) do
+    case OptionParser.parse(args, strict: @mcp_bridge_switches) do
+      {opts, [], []} ->
+        case Keyword.fetch(opts, :workflow) do
+          {:ok, workflow_path} ->
+            :ok = SymphonyElixir.Workflow.set_workflow_file_path(Path.expand(workflow_path))
+            {:ok, _started_apps} = Application.ensure_all_started(:req)
+            :ok = SymphonyElixir.MCP.ToolBridge.serve()
+            System.halt(0)
+
+          :error ->
+            IO.puts(:stderr, mcp_bridge_usage_message())
+            System.halt(1)
+        end
+
+      _ ->
+        IO.puts(:stderr, mcp_bridge_usage_message())
+        System.halt(1)
+    end
+  end
+
+  defp mcp_bridge_usage_message do
+    "Usage: symphony mcp-tool-bridge --workflow <path-to-WORKFLOW.md>"
   end
 
   @doc false
