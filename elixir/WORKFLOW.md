@@ -1,6 +1,8 @@
 ---
 tracker:
-  kind: memory
+  kind: linear
+  provider:
+    project_slug: ai-development-8144e9dd30ed
   required_labels: []
   active_states:
     - Todo
