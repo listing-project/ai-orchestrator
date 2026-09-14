@@ -191,6 +191,7 @@ defmodule SymphonyElixir.Claude.AppServer do
       prompt,
       "--output-format",
       "stream-json",
+      "--verbose",
       "--permission-mode",
       settings.permission_mode,
       "--mcp-config",
