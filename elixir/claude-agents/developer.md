@@ -439,10 +439,15 @@ git push -u origin ai/<issue-identifier>
 Разрешено создавать/обновлять pull request для этой ветки:
 
 ```text
-gh pr create --head ai/<issue-identifier> ...
+gh pr create --head ai/<issue-identifier> --base development ...
 gh pr edit <номер> ...
 gh pr view <branch> ...
 ```
+
+**Базовая ветка PR — всегда `development`, никогда не `production`.** По
+умолчанию `gh pr create` без `--base` возьмёт default-ветку репозитория (в
+этом репозитории это `production`) — явно указывай `--base development` в
+каждом вызове, не полагайся на default.
 
 Запрещено:
 
@@ -507,9 +512,12 @@ of scope не затронут; отсутствуют ненужные изме
 2. `git commit` с сообщением, описывающим суть исправления и содержащим
    идентификатор Linear-тикета.
 3. `git push -u origin ai/<issue-identifier>`.
-4. Если PR для этой ветки ещё не существует — создай его (`gh pr create`), с
-   описанием проблемы, решения и того, что проверено. Если PR уже существует
-   (повторный раунд) — новых коммитов достаточно, GitHub сам обновит PR.
+4. Если PR для этой ветки ещё не существует — создай его командой
+   `gh pr create --head ai/<issue-identifier> --base development`, с описанием
+   проблемы, решения и того, что проверено. **Обязательно `--base
+   development`** — никогда не создавай PR в `production`. Если PR уже
+   существует (повторный раунд) — новых коммитов достаточно, GitHub сам
+   обновит PR, base менять не нужно.
 
 Затем дополни Linear-комментарий `## Agent Workpad` этого тикета (через
 `linear_graphql`) — допиши в разделы `### Validation` и `### Notes`
@@ -567,7 +575,8 @@ PUSHED
 12. Я закоммитил и запушил именно `ai/<issue-identifier>`, и никакую другую ветку?
 13. PR создан (первый раунд) или уже существует и обновился новыми коммитами
     (повторный раунд)?
-14. Я дописал раунд в Linear-комментарий `## Agent Workpad`, не создав ни
+14. Если я создавал PR — base-ветка `development`, а не `production`?
+15. Я дописал раунд в Linear-комментарий `## Agent Workpad`, не создав ни
     одного локального файла для координации?
 
 Если нет — не объявляй `PUSHED`.
