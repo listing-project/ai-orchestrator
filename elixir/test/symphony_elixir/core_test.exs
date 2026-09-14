@@ -1898,7 +1898,11 @@ defmodule SymphonyElixir.CoreTest do
              title: "Continue until done",
              description: "Still active after first turn",
              state: state,
-             dispatchable: true
+             dispatchable: true,
+             # Distinct from the dispatched issue's updated_at below, so the
+             # post-turn-1 fingerprint check sees a real external change and
+             # allows the second turn (see continuation retry fingerprint gating).
+             updated_at: ~U[2026-01-01 00:05:00Z]
            }
          ]}
       end
@@ -1910,7 +1914,8 @@ defmodule SymphonyElixir.CoreTest do
         description: "Still active after first turn",
         state: "In Progress",
         url: "https://example.org/issues/MT-247",
-        labels: []
+        labels: [],
+        updated_at: ~U[2026-01-01 00:00:00Z]
       }
 
       assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
@@ -2016,7 +2021,12 @@ defmodule SymphonyElixir.CoreTest do
              title: "Stop at max turns",
              description: "Still active",
              state: "In Progress",
-             dispatchable: true
+             dispatchable: true,
+             # Distinct from the dispatched issue's updated_at below, so the
+             # post-turn-1 fingerprint check sees a real external change and
+             # lets the run reach turn 2 before stopping on max_turns (see
+             # continuation retry fingerprint gating).
+             updated_at: ~U[2026-01-01 00:05:00Z]
            }
          ]}
       end
@@ -2028,7 +2038,8 @@ defmodule SymphonyElixir.CoreTest do
         description: "Still active",
         state: "In Progress",
         url: "https://example.org/issues/MT-248",
-        labels: []
+        labels: [],
+        updated_at: ~U[2026-01-01 00:00:00Z]
       }
 
       assert :ok = AgentRunner.run(issue, nil, issue_state_fetcher: state_fetcher)
