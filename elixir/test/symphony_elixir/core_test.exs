@@ -122,10 +122,13 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openai/symphony ."
-    assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
-    assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
-    assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
+
+    assert Map.get(hooks, "after_create") =~
+             "git clone --depth 1 --branch development git@github.com:listing-project/difmark.git ."
+
+    assert Map.get(hooks, "before_run") =~ "cp /var/www/ai-orchestrator/elixir/claude-agents/*.md .claude/agents/"
+    assert Map.get(hooks, "before_run") =~ "cp /var/www/ai-orchestrator/elixir/claude-commands/*.md .claude/commands/"
+    assert Map.get(hooks, "before_remove") =~ "true"
 
     assert String.trim(prompt) != ""
     assert is_binary(Config.workflow_prompt())
@@ -1537,17 +1540,18 @@ defmodule SymphonyElixir.CoreTest do
 
     prompt = PromptBuilder.build_prompt(issue, attempt: 2)
 
-    assert prompt =~ "You are working on a Linear ticket `MT-616`"
-    assert prompt =~ "Issue context:"
+    assert prompt =~ "Linear ticket `MT-616`"
+    assert prompt =~ "## Issue"
     assert prompt =~ "Identifier: MT-616"
     assert prompt =~ "Title: Use rich templates for WORKFLOW.md"
     assert prompt =~ "Current status: In Progress"
     assert prompt =~ "https://example.org/issues/MT-616/use-rich-templates-for-workflowmd"
-    assert prompt =~ "This is an unattended orchestration session."
-    assert prompt =~ "Only stop early for a true external blocker"
-    assert prompt =~ "Do not include \"next steps for user\""
-    assert prompt =~ "open and follow `.codex/skills/land/SKILL.md`"
-    assert prompt =~ "Do not call `gh pr merge` directly"
+    assert prompt =~ "## Boundaries"
+    assert prompt =~ "Never merge a pull request."
+    assert prompt =~ "Never wait for an external event by checking it repeatedly"
+    assert prompt =~ "Only treat something as blocked when an external dependency genuinely prevents useful progress"
+    assert prompt =~ "Do not invent successful completion when blocked."
+    assert prompt =~ "Use the available Linear integration"
     assert prompt =~ "Follow-up context:"
     assert prompt =~ "follow-up attempt #2"
   end
