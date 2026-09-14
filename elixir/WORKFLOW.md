@@ -40,6 +40,7 @@ codex:
     networkAccess: true
 
 claude:
+  command: /home/developer/.local/bin/claude
   mcp_bridge_command: /var/www/ai-orchestrator/elixir/bin/symphony mcp-tool-bridge
 ---
 
