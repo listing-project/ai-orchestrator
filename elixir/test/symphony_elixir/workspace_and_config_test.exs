@@ -807,6 +807,36 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
+  test "issue is not redispatched when unchanged since its last dispatch" do
+    updated_at = ~U[2026-01-01 00:00:00Z]
+
+    issue = %Issue{
+      id: "unchanged-1",
+      identifier: "MT-1010",
+      title: "Still Todo",
+      state: "Todo",
+      dispatchable: true,
+      updated_at: updated_at
+    }
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{},
+      dispatch_fingerprints: %{"unchanged-1" => {"todo", updated_at}}
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
+
+    changed_state = %{state | dispatch_fingerprints: %{"unchanged-1" => {"todo", ~U[2025-12-31 00:00:00Z]}}}
+    assert Orchestrator.should_dispatch_issue_for_test(issue, changed_state)
+
+    moved_issue = %{issue | state: "In Progress"}
+    assert Orchestrator.should_dispatch_issue_for_test(moved_issue, state)
+  end
+
   test "dispatch revalidation skips an issue when provider routing changes" do
     stale_issue = %Issue{
       id: "blocked-2",

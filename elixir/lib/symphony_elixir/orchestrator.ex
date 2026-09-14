@@ -40,6 +40,7 @@ defmodule SymphonyElixir.Orchestrator do
       claimed: MapSet.new(),
       blocked: %{},
       retry_attempts: %{},
+      dispatch_fingerprints: %{},
       codex_totals: nil,
       codex_rate_limits: nil
     ]
@@ -831,10 +832,36 @@ defmodule SymphonyElixir.Orchestrator do
       !Map.has_key?(blocked, issue.id) and
       available_slots(state) > 0 and
       state_slots_available?(issue, running) and
-      worker_slots_available?(state)
+      worker_slots_available?(state) and
+      fingerprint_changed_since_last_dispatch?(issue, state.dispatch_fingerprints)
   end
 
   defp should_dispatch_issue?(_issue, _state, _active_states, _terminal_states), do: false
+
+  # A tuple of everything Symphony already knows about the issue, cheaply,
+  # before ever starting Claude: its tracker column and its own
+  # provider-reported last-update timestamp. If neither changed since the
+  # last time this issue was actually dispatched, running the agent again
+  # would just repeat the same turn for nothing (see the DIF-10 repeated-run
+  # investigation) — so poll-cycle dispatch skips it. Error-recovery retries
+  # (`handle_active_retry/4`) intentionally bypass this check: those must
+  # retry regardless of whether the issue itself changed.
+  @spec issue_dispatch_fingerprint(Issue.t()) :: {String.t() | nil, DateTime.t() | nil}
+  defp issue_dispatch_fingerprint(%Issue{state: state_name, updated_at: updated_at}) do
+    {normalize_issue_state(state_name), updated_at}
+  end
+
+  defp fingerprint_changed_since_last_dispatch?(%Issue{id: id} = issue, dispatch_fingerprints) do
+    case Map.fetch(dispatch_fingerprints, id) do
+      :error -> true
+      {:ok, previous_fingerprint} -> issue_dispatch_fingerprint(issue) != previous_fingerprint
+    end
+  end
+
+  # Only a continuation retry (normal completion, issue still active) is
+  # gated on the fingerprint. Error/crash/stall/infra retries must keep
+  # retrying unconditionally with their existing backoff.
+  defp continuation_retry?(metadata), do: metadata[:delay_type] == :continuation
 
   defp state_slots_available?(%Issue{state: issue_state}, running) when is_map(running) do
     limit = Config.max_concurrent_agents_for_state(issue_state)
@@ -999,7 +1026,8 @@ defmodule SymphonyElixir.Orchestrator do
           state
           | running: running,
             claimed: MapSet.put(state.claimed, issue.id),
-            retry_attempts: Map.delete(state.retry_attempts, issue.id)
+            retry_attempts: Map.delete(state.retry_attempts, issue.id),
+            dispatch_fingerprints: Map.put(state.dispatch_fingerprints, issue.id, issue_dispatch_fingerprint(issue))
         }
 
       {:error, reason} ->
@@ -1056,6 +1084,7 @@ defmodule SymphonyElixir.Orchestrator do
     error = pick_retry_error(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
+    delay_type = pick_retry_delay_type(previous_retry, metadata)
 
     if is_reference(old_timer) do
       Process.cancel_timer(old_timer)
@@ -1079,7 +1108,8 @@ defmodule SymphonyElixir.Orchestrator do
             issue_url: issue_url,
             error: error,
             worker_host: worker_host,
-            workspace_path: workspace_path
+            workspace_path: workspace_path,
+            delay_type: delay_type
           })
     }
   end
@@ -1092,7 +1122,8 @@ defmodule SymphonyElixir.Orchestrator do
           issue_url: Map.get(retry_entry, :issue_url),
           error: Map.get(retry_entry, :error),
           worker_host: Map.get(retry_entry, :worker_host),
-          workspace_path: Map.get(retry_entry, :workspace_path)
+          workspace_path: Map.get(retry_entry, :workspace_path),
+          delay_type: Map.get(retry_entry, :delay_type)
         }
 
         {:ok, attempt, metadata, %{state | retry_attempts: Map.delete(state.retry_attempts, issue_id)}}
@@ -1196,7 +1227,16 @@ defmodule SymphonyElixir.Orchestrator do
          worker_slots_available?(state, metadata[:worker_host]) do
       case refresh_issue_for_dispatch(issue) do
         {:ok, %Issue{} = refreshed_issue} ->
-          {:noreply, do_dispatch_issue(state, refreshed_issue, attempt, metadata[:worker_host])}
+          if continuation_retry?(metadata) and
+               not fingerprint_changed_since_last_dispatch?(refreshed_issue, state.dispatch_fingerprints) do
+            Logger.info(
+              "Skipping continuation retry for #{issue_context(refreshed_issue)}: issue unchanged since last dispatch; leaving it to ordinary polling"
+            )
+
+            {:noreply, release_issue_claim(state, issue.id)}
+          else
+            {:noreply, do_dispatch_issue(state, refreshed_issue, attempt, metadata[:worker_host])}
+          end
 
         {:skip, :missing} ->
           {:noreply, release_issue_claim(state, issue.id)}
@@ -1282,6 +1322,10 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp pick_retry_workspace_path(previous_retry, metadata) do
     metadata[:workspace_path] || Map.get(previous_retry, :workspace_path)
+  end
+
+  defp pick_retry_delay_type(previous_retry, metadata) do
+    metadata[:delay_type] || Map.get(previous_retry, :delay_type)
   end
 
   defp maybe_put_runtime_value(running_entry, _key, nil), do: running_entry

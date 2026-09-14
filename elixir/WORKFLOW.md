@@ -124,6 +124,12 @@ Regardless of role:
 - Never modify code outside the provided workspace.
 - Never deploy changes to production or perform destructive operations against shared environments.
 - Never expand the ticket's scope with unrelated improvements — if you find something unrelated, note it briefly in the workpad instead.
+- Never wait for an external event by checking it repeatedly (a new Linear comment, a Linear status change, a branch or PR being created or updated, a PR review or comment, a CI result, or anything else outside this workspace). If further work depends on something that has not happened yet:
+  1. Check its state once.
+  2. Record in the workpad exactly what is missing.
+  3. Stop and return control to Symphony — do not sleep, poll, or retry waiting for it inside this session.
+
+  External-event detection and re-dispatch are the orchestrator's responsibility, not yours.
 
 Only a human may decide the work is accepted, request further rework, merge a pull request, or close a ticket out of this workflow. Your job ends at the role's `success_state`.
 

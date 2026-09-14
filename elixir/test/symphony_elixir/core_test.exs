@@ -2396,4 +2396,248 @@ defmodule SymphonyElixir.CoreTest do
       File.rm_rf(test_root)
     end
   end
+
+  describe "continuation retry fingerprint gating" do
+    test "normal completion + active issue + unchanged fingerprint does not create a new Claude session" do
+      test_root =
+        Path.join(
+          System.tmp_dir!(),
+          "symphony-elixir-continuation-unchanged-#{System.unique_integer([:positive])}"
+        )
+
+      try do
+        write_workflow_file!(Workflow.workflow_file_path(),
+          tracker_kind: "memory",
+          workspace_root: test_root,
+          hook_before_run: "exit 1"
+        )
+
+        issue_id = "continuation-unchanged"
+        updated_at = ~U[2026-09-14 10:00:00Z]
+
+        issue = %Issue{
+          id: issue_id,
+          identifier: "MT-600",
+          title: "Unchanged continuation",
+          state: "In Progress",
+          dispatchable: true,
+          labels: [],
+          updated_at: updated_at
+        }
+
+        Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+        {:ok, task_supervisor} = Task.Supervisor.start_link()
+
+        state = %Orchestrator.State{
+          task_supervisor: task_supervisor,
+          claimed: MapSet.new([issue_id]),
+          retry_attempts: %{},
+          dispatch_fingerprints: %{issue_id => {"in progress", updated_at}}
+        }
+
+        updated_state =
+          Orchestrator.handle_retry_issue_lookup_for_test(issue, state, issue_id, 1, %{
+            identifier: issue.identifier,
+            worker_host: nil,
+            delay_type: :continuation
+          })
+
+        refute MapSet.member?(updated_state.claimed, issue_id)
+        refute Map.has_key?(updated_state.running, issue_id)
+        # Also covers "skipped continuation does not schedule another immediate
+        # continuation": only schedule_issue_retry/4 arms a new {:retry_issue, ...}
+        # timer, and it always leaves an entry behind — its absence here means
+        # no follow-up continuation retry was scheduled.
+        refute Map.has_key?(updated_state.retry_attempts, issue_id)
+        assert updated_state.dispatch_fingerprints[issue_id] == {"in progress", updated_at}
+      after
+        File.rm_rf(test_root)
+      end
+    end
+
+    test "normal completion + active issue + changed fingerprint allows dispatch" do
+      test_root =
+        Path.join(
+          System.tmp_dir!(),
+          "symphony-elixir-continuation-changed-#{System.unique_integer([:positive])}"
+        )
+
+      try do
+        write_workflow_file!(Workflow.workflow_file_path(),
+          tracker_kind: "memory",
+          workspace_root: test_root,
+          hook_before_run: "exit 1"
+        )
+
+        issue_id = "continuation-changed"
+        old_updated_at = ~U[2026-09-14 09:00:00Z]
+        new_updated_at = ~U[2026-09-14 10:00:00Z]
+
+        issue = %Issue{
+          id: issue_id,
+          identifier: "MT-601",
+          title: "Changed continuation",
+          state: "In Progress",
+          dispatchable: true,
+          labels: [],
+          updated_at: new_updated_at
+        }
+
+        Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+        {:ok, task_supervisor} = Task.Supervisor.start_link()
+
+        state = %Orchestrator.State{
+          task_supervisor: task_supervisor,
+          claimed: MapSet.new([issue_id]),
+          retry_attempts: %{},
+          dispatch_fingerprints: %{issue_id => {"in progress", old_updated_at}}
+        }
+
+        updated_state =
+          Orchestrator.handle_retry_issue_lookup_for_test(issue, state, issue_id, 1, %{
+            identifier: issue.identifier,
+            worker_host: nil,
+            delay_type: :continuation
+          })
+
+        assert MapSet.member?(updated_state.claimed, issue_id)
+        assert Map.has_key?(updated_state.running, issue_id)
+        assert updated_state.dispatch_fingerprints[issue_id] == {"in progress", new_updated_at}
+      after
+        File.rm_rf(test_root)
+      end
+    end
+
+    test "error retry dispatches even when the fingerprint is unchanged" do
+      test_root =
+        Path.join(
+          System.tmp_dir!(),
+          "symphony-elixir-error-retry-unchanged-#{System.unique_integer([:positive])}"
+        )
+
+      try do
+        write_workflow_file!(Workflow.workflow_file_path(),
+          tracker_kind: "memory",
+          workspace_root: test_root,
+          hook_before_run: "exit 1"
+        )
+
+        issue_id = "error-retry-unchanged"
+        updated_at = ~U[2026-09-14 10:00:00Z]
+
+        issue = %Issue{
+          id: issue_id,
+          identifier: "MT-602",
+          title: "Error retry, same fingerprint",
+          state: "In Progress",
+          dispatchable: true,
+          labels: [],
+          updated_at: updated_at
+        }
+
+        Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+        {:ok, task_supervisor} = Task.Supervisor.start_link()
+
+        state = %Orchestrator.State{
+          task_supervisor: task_supervisor,
+          claimed: MapSet.new([issue_id]),
+          retry_attempts: %{},
+          # Same fingerprint as what would be stored for this issue — proves the
+          # error path ignores it entirely, unlike the continuation path above.
+          dispatch_fingerprints: %{issue_id => {"in progress", updated_at}}
+        }
+
+        updated_state =
+          Orchestrator.handle_retry_issue_lookup_for_test(issue, state, issue_id, 1, %{
+            identifier: issue.identifier,
+            worker_host: nil,
+            error: "agent exited: :boom"
+          })
+
+        assert MapSet.member?(updated_state.claimed, issue_id)
+        assert Map.has_key?(updated_state.running, issue_id)
+      after
+        File.rm_rf(test_root)
+      end
+    end
+
+    test "error retry dispatches when the fingerprint changed" do
+      test_root =
+        Path.join(
+          System.tmp_dir!(),
+          "symphony-elixir-error-retry-changed-#{System.unique_integer([:positive])}"
+        )
+
+      try do
+        write_workflow_file!(Workflow.workflow_file_path(),
+          tracker_kind: "memory",
+          workspace_root: test_root,
+          hook_before_run: "exit 1"
+        )
+
+        issue_id = "error-retry-changed"
+        old_updated_at = ~U[2026-09-14 09:00:00Z]
+        new_updated_at = ~U[2026-09-14 10:00:00Z]
+
+        issue = %Issue{
+          id: issue_id,
+          identifier: "MT-603",
+          title: "Error retry, different fingerprint",
+          state: "In Progress",
+          dispatchable: true,
+          labels: [],
+          updated_at: new_updated_at
+        }
+
+        Application.put_env(:symphony_elixir, :memory_tracker_issues, [issue])
+        {:ok, task_supervisor} = Task.Supervisor.start_link()
+
+        state = %Orchestrator.State{
+          task_supervisor: task_supervisor,
+          claimed: MapSet.new([issue_id]),
+          retry_attempts: %{},
+          dispatch_fingerprints: %{issue_id => {"in progress", old_updated_at}}
+        }
+
+        updated_state =
+          Orchestrator.handle_retry_issue_lookup_for_test(issue, state, issue_id, 1, %{
+            identifier: issue.identifier,
+            worker_host: nil,
+            error: "agent exited: :boom"
+          })
+
+        assert MapSet.member?(updated_state.claimed, issue_id)
+        assert Map.has_key?(updated_state.running, issue_id)
+      after
+        File.rm_rf(test_root)
+      end
+    end
+
+    test "ordinary polling can dispatch after a skipped continuation once the fingerprint changes" do
+      write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+
+      issue_id = "continuation-then-poll"
+      old_updated_at = ~U[2026-09-14 09:00:00Z]
+      new_updated_at = ~U[2026-09-14 10:00:00Z]
+
+      # Mirrors the state left behind after a skipped continuation retry: the
+      # issue is no longer claimed/running, and dispatch_fingerprints still
+      # holds the last dispatch's snapshot untouched.
+      state = %Orchestrator.State{
+        dispatch_fingerprints: %{issue_id => {"in progress", old_updated_at}}
+      }
+
+      new_issue = %Issue{
+        id: issue_id,
+        identifier: "MT-604",
+        title: "Poll after skipped continuation",
+        state: "In Progress",
+        dispatchable: true,
+        labels: [],
+        updated_at: new_updated_at
+      }
+
+      assert Orchestrator.should_dispatch_issue_for_test(new_issue, state)
+    end
+  end
 end

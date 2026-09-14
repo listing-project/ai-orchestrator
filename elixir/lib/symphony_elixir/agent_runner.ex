@@ -134,19 +134,25 @@ defmodule SymphonyElixir.AgentRunner do
 
       case continue_with_issue?(issue, issue_state_fetcher) do
         {:continue, refreshed_issue} when turn_number < max_turns ->
-          Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
+          if issue_fingerprint(issue) == issue_fingerprint(refreshed_issue) do
+            Logger.info("Stopping agent run for #{issue_context(refreshed_issue)} after turn=#{turn_number}/#{max_turns}: issue unchanged by this turn, not continuing without a new external change")
 
-          do_run_codex_turns(
-            backend,
-            app_session,
-            workspace,
-            refreshed_issue,
-            codex_update_recipient,
-            opts,
-            issue_state_fetcher,
-            turn_number + 1,
-            max_turns
-          )
+            :ok
+          else
+            Logger.info("Continuing agent run for #{issue_context(refreshed_issue)} after normal turn completion turn=#{turn_number}/#{max_turns}")
+
+            do_run_codex_turns(
+              backend,
+              app_session,
+              workspace,
+              refreshed_issue,
+              codex_update_recipient,
+              opts,
+              issue_state_fetcher,
+              turn_number + 1,
+              max_turns
+            )
+          end
 
         {:continue, refreshed_issue} ->
           Logger.info("Reached agent.max_turns for #{issue_context(refreshed_issue)} with issue still active; returning control to orchestrator")
@@ -160,6 +166,15 @@ defmodule SymphonyElixir.AgentRunner do
           {:error, reason}
       end
     end
+  end
+
+  # Mirrors the fingerprint SymphonyElixir.Orchestrator computes before
+  # dispatching at all: if neither the tracker column nor the provider's own
+  # last-update timestamp moved during a turn, that turn didn't accomplish
+  # anything Symphony can observe, so another continuation turn would just
+  # repeat it (see the DIF-10 repeated-run investigation).
+  defp issue_fingerprint(%Issue{state: state_name, updated_at: updated_at}) do
+    {normalize_issue_state(state_name), updated_at}
   end
 
   defp build_turn_prompt(issue, opts, 1, _max_turns), do: PromptBuilder.build_prompt(issue, opts)
