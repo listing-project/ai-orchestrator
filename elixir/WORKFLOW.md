@@ -37,6 +37,9 @@ codex:
   turn_sandbox_policy:
     type: workspaceWrite
     networkAccess: true
+
+claude:
+  mcp_bridge_command: /var/www/ai-orchestrator/elixir/bin/symphony mcp-tool-bridge
 ---
 
 You are working on Linear ticket `{{ issue.identifier }}`.
