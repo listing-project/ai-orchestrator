@@ -23,7 +23,7 @@ workspace:
 
 hooks:
   after_create: |
-    git clone --depth 1 git@github.com:listing-project/difmark.git .
+    git clone --depth 1 --branch development git@github.com:listing-project/difmark.git .
   before_run: |
     mkdir -p .claude/agents .claude/commands
     cp /var/www/ai-orchestrator/elixir/claude-agents/*.md .claude/agents/
