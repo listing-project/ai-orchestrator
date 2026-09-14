@@ -12,7 +12,7 @@ description: >-
   реализовать без неизвестного бизнес-решения или существенного отклонения от
   плана, останавливается с BLOCKED. Нет отдельного review-агента — Developer
   сам несёт ответственность за то, что коммитит.
-model: opus
+model: sonnet
 tools: Read, Grep, Glob, Bash, Edit, Write, mcp__symphony-tracker__linear_graphql
 permissionMode: dontAsk
 ---
