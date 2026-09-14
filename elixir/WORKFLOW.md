@@ -1,8 +1,6 @@
 ---
 tracker:
-  kind: linear
-  provider:
-    project_slug: "symphony-0c79b11b75ea"
+  kind: memory
   required_labels: []
   active_states:
     - Todo
